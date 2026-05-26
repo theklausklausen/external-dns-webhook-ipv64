@@ -1,0 +1,102 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-dns-webhook-ipv64
+  namespace: external-dns
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-dns-webhook-ipv64
+  namespace: external-dns
+  labels:
+    app: external-dns-webhook-ipv64
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8888
+      targetPort: 8888
+      protocol: TCP
+      name: http
+  selector:
+    app: external-dns-webhook-ipv64
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns-webhook-ipv64
+  namespace: external-dns
+  labels:
+    app: external-dns-webhook-ipv64
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-dns-webhook-ipv64
+  template:
+    metadata:
+      labels:
+        app: external-dns-webhook-ipv64
+    spec:
+      serviceAccountName: external-dns-webhook-ipv64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: webhook
+          image: your-registry/external-dns-webhook-ipv64:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+              name: http
+              protocol: TCP
+          env:
+            - name: IPV64_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ipv64-api-key
+                  key: api-key
+            - name: LOG_LEVEL
+              value: "info"
+            - name: LOG_FORMAT
+              value: "text"
+            - name: DOMAIN_FILTER
+              value: ""  # Set your domain filter here
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8888
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
