@@ -1,6 +1,7 @@
 package ipv64
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,10 +11,13 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 const (
-	defaultAPIURL = "https://ipv64.net/api.php"
+	defaultAPIURL        = "https://ipv64.net/api.php"
+	maxRequestsPerWindow = 5
+	requestWindow        = 10 * time.Second
 )
 
 // Client represents an ipv64 DNS API client
@@ -23,6 +27,7 @@ type Client struct {
 	apiURL     string
 	apiKey     string
 	httpClient *http.Client
+	limiter    *rate.Limiter
 }
 
 // NewClient creates a new ipv64 DNS client with Bearer token authentication
@@ -33,6 +38,7 @@ func NewClient(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		limiter: rate.NewLimiter(rate.Every(requestWindow/maxRequestsPerWindow), maxRequestsPerWindow),
 	}
 }
 
@@ -44,6 +50,7 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		limiter: rate.NewLimiter(rate.Every(requestWindow/maxRequestsPerWindow), maxRequestsPerWindow),
 	}
 }
 
@@ -60,6 +67,10 @@ func isSuccessStatus(status string) bool {
 
 // doRequest performs an HTTP request with Bearer token authentication
 func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, error) {
+	if err := c.limiter.Wait(context.Background()); err != nil {
+		return nil, fmt.Errorf("rate limit wait failed: %w", err)
+	}
+
 	var reqURL string
 	var body io.Reader
 
