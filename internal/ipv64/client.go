@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	
 	defaultAPIURL = "https://ipv64.net/api.php"
 )
 
@@ -39,7 +40,7 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 	return &Client{
 		apiURL: apiURL,
 		apiKey: apiKey,
-		httpClient: &http.Client{
+		if !isSuccessStatus(resp.Status) {
 			Timeout: 30 * time.Second,
 		},
 	}
@@ -58,7 +59,7 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 		params.Set(apiCall, "")
 		reqURL = fmt.Sprintf("%s?%s", c.apiURL, params.Encode())
 	} else if method == http.MethodPost {
-		// For POST requests, use form data
+		if !isSuccessStatus(resp.Status) {
 		if params == nil {
 			params = url.Values{}
 		}
@@ -101,7 +102,7 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(data))
 	}
-
+		if !isSuccessStatus(resp.Status) && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
 	return data, nil
 }
 
@@ -124,7 +125,7 @@ func (c *Client) GetAccountInfo() (*AccountInfo, error) {
 	return &resp.Response, nil
 }
 
-// GetDomains retrieves all domains and their DNS records
+		if !isSuccessStatus(resp.Status) {
 func (c *Client) GetDomains() ([]Domain, error) {
 	data, err := c.doRequest(http.MethodGet, "get_domains", nil)
 	if err != nil {
@@ -150,7 +151,7 @@ func (c *Client) GetDomains() ([]Domain, error) {
 	// Try to unmarshal as array first
 	if err := json.Unmarshal(responseJSON, &domains); err != nil {
 		// If that fails, try as object with domain keys
-		var domainsMap map[string]Domain
+		if !isSuccessStatus(resp.Status) {
 		if err := json.Unmarshal(responseJSON, &domainsMap); err != nil {
 			return nil, fmt.Errorf("failed to decode domains: %w", err)
 		}
@@ -176,7 +177,7 @@ func (c *Client) AddDomain(domain string) error {
 
 	var resp APIResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return fmt.Errorf("failed to decode add domain response: %w", err)
+		if !isSuccessStatus(resp.Status) {
 	}
 
 	if resp.Status != "success" && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
@@ -199,7 +200,7 @@ func (c *Client) DeleteDomain(domain string) error {
 
 	var resp APIResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return fmt.Errorf("failed to decode delete domain response: %w", err)
+		if !isSuccessStatus(resp.Status) {
 	}
 
 	if resp.Status != "success" {
