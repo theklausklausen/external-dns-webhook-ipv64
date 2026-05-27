@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	
 	defaultAPIURL = "https://ipv64.net/api.php"
 )
 
 // Client represents an ipv64 DNS API client
+//
+//nolint:revive // apiURL naming follows existing project style.
 type Client struct {
 	apiURL     string
 	apiKey     string
@@ -40,10 +41,21 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 	return &Client{
 		apiURL: apiURL,
 		apiKey: apiKey,
-		if !isSuccessStatus(resp.Status) {
+		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// isSuccessStatus normalizes IPv64 status values to account for API variants.
+func isSuccessStatus(status string) bool {
+	s := strings.ToLower(strings.TrimSpace(status))
+	if s == "success" || s == "ok" {
+		return true
+	}
+
+	// Some IPv64 responses return HTTP-like status strings such as "200 OK".
+	return strings.HasPrefix(s, "2") || strings.HasPrefix(s, "http 2")
 }
 
 // doRequest performs an HTTP request with Bearer token authentication
@@ -52,26 +64,19 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 	var body io.Reader
 
 	if method == http.MethodGet {
-		// For GET requests, add parameters to URL
 		if params == nil {
 			params = url.Values{}
 		}
 		params.Set(apiCall, "")
 		reqURL = fmt.Sprintf("%s?%s", c.apiURL, params.Encode())
-	} else if method == http.MethodPost {
-		if !isSuccessStatus(resp.Status) {
+	} else if method == http.MethodPost || method == http.MethodDelete {
 		if params == nil {
 			params = url.Values{}
 		}
 		body = strings.NewReader(params.Encode())
 		reqURL = c.apiURL
-	} else if method == http.MethodDelete {
-		// For DELETE requests, use form data
-		if params == nil {
-			params = url.Values{}
-		}
-		body = strings.NewReader(params.Encode())
-		reqURL = c.apiURL
+	} else {
+		return nil, fmt.Errorf("unsupported HTTP method: %s", method)
 	}
 
 	req, err := http.NewRequest(method, reqURL, body)
@@ -79,10 +84,7 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add Bearer token authentication
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
-
-	// Set content type for POST and DELETE requests
 	if method == http.MethodPost || method == http.MethodDelete {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -98,11 +100,10 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Check for HTTP errors
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(data))
 	}
-		if !isSuccessStatus(resp.Status) && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
+
 	return data, nil
 }
 
@@ -118,14 +119,14 @@ func (c *Client) GetAccountInfo() (*AccountInfo, error) {
 		return nil, fmt.Errorf("failed to decode account info response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
 	}
 
 	return &resp.Response, nil
 }
 
-		if !isSuccessStatus(resp.Status) {
+// GetDomains retrieves all domains and their DNS records
 func (c *Client) GetDomains() ([]Domain, error) {
 	data, err := c.doRequest(http.MethodGet, "get_domains", nil)
 	if err != nil {
@@ -137,25 +138,21 @@ func (c *Client) GetDomains() ([]Domain, error) {
 		return nil, fmt.Errorf("failed to decode domains response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
 	}
 
-	// Parse the response which can be either an array or an object
 	var domains []Domain
 	responseJSON, err := json.Marshal(resp.Response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
 	}
 
-	// Try to unmarshal as array first
 	if err := json.Unmarshal(responseJSON, &domains); err != nil {
-		// If that fails, try as object with domain keys
-		if !isSuccessStatus(resp.Status) {
+		var domainsMap map[string]Domain
 		if err := json.Unmarshal(responseJSON, &domainsMap); err != nil {
 			return nil, fmt.Errorf("failed to decode domains: %w", err)
 		}
-		// Convert map to slice
 		for domainName, domain := range domainsMap {
 			domain.Domain = domainName
 			domains = append(domains, domain)
@@ -177,10 +174,10 @@ func (c *Client) AddDomain(domain string) error {
 
 	var resp APIResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		if !isSuccessStatus(resp.Status) {
+		return fmt.Errorf("failed to decode add domain response: %w", err)
 	}
 
-	if resp.Status != "success" && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
+	if !isSuccessStatus(resp.Status) && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
 		return fmt.Errorf("failed to add domain: %s", resp.Response)
 	}
 
@@ -200,10 +197,10 @@ func (c *Client) DeleteDomain(domain string) error {
 
 	var resp APIResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		if !isSuccessStatus(resp.Status) {
+		return fmt.Errorf("failed to decode delete domain response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete domain: %s", resp.Response)
 	}
 
@@ -229,7 +226,7 @@ func (c *Client) AddRecord(domain, praefix, recordType, content string) error {
 		return fmt.Errorf("failed to decode add record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to add record: %s", resp.Response)
 	}
 
@@ -255,7 +252,7 @@ func (c *Client) DeleteRecord(domain, praefix, recordType, content string) error
 		return fmt.Errorf("failed to decode delete record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete record: %s", resp.Response)
 	}
 
@@ -278,7 +275,7 @@ func (c *Client) DeleteRecordByID(recordID int) error {
 		return fmt.Errorf("failed to decode delete record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete record: %s", resp.Response)
 	}
 
