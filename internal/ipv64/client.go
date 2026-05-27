@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	defaultAPIURL        = "https://ipv64.net/api.php"
-	maxRequestsPerWindow = 5
-	requestWindow        = 10 * time.Second
+	defaultAPIURL   = "https://ipv64.net/api.php"
+	requestInterval = 5 * time.Second
+	requestBurst    = 1
 )
 
 // Client represents an ipv64 DNS API client
@@ -38,7 +38,7 @@ func NewClient(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		limiter: rate.NewLimiter(rate.Every(requestWindow/maxRequestsPerWindow), maxRequestsPerWindow),
+		limiter: rate.NewLimiter(rate.Every(requestInterval), requestBurst),
 	}
 }
 
@@ -50,7 +50,7 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		limiter: rate.NewLimiter(rate.Every(requestWindow/maxRequestsPerWindow), maxRequestsPerWindow),
+		limiter: rate.NewLimiter(rate.Every(requestInterval), requestBurst),
 	}
 }
 

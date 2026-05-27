@@ -158,7 +158,7 @@ spec:
       name: webhook
       webhook:
         image:
-          repository: your-registry/external-dns-webhook-ipv64
+          repository: ghcr.io/theklausklausen/external-dns-webhook-ipv64
           tag: latest
         env:
           - name: IPV64_API_KEY
