@@ -16,6 +16,7 @@ import (
 
 const (
 	defaultAPIURL   = "https://ipv64.net/api.php"
+	healthcheckURL  = "https://ipv64.net/"
 	requestInterval = 5 * time.Second
 	requestBurst    = 1
 )
@@ -303,6 +304,24 @@ func (c *Client) DeleteRecordByID(recordID int) error {
 
 // HealthCheck performs a health check on the ipv64 API
 func (c *Client) HealthCheck() error {
-	_, err := c.GetAccountInfo()
-	return err
+	req, err := http.NewRequest(http.MethodGet, healthcheckURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create health check request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return fmt.Errorf("failed to read health check response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("health check failed with status: %s", resp.Status)
+	}
+
+	return nil
 }
