@@ -159,20 +159,9 @@ func (p *IPv64Provider) createEndpoint(ep *endpoint.Endpoint) error {
 				continue
 			}
 
-			// Create missing domain only when the API explicitly reports it as missing.
 			if strings.Contains(strings.ToLower(err.Error()), "domain not found") {
-				if ensureErr := p.client.AddDomain(domain); ensureErr != nil {
-					log.Errorf("Failed to create missing domain %s after add_record error: %v", domain, ensureErr)
-					return err
-				}
-
-				if retryErr := p.client.AddRecord(domain, praefix, ep.RecordType, target); retryErr != nil {
-					log.Errorf("Failed to create record after creating domain: domain=%s praefix=%s type=%s target=%s error=%v", domain, praefix, ep.RecordType, target, retryErr)
-					return retryErr
-				}
-
-				log.Debugf("Successfully created record after domain creation: domain=%s praefix=%s type=%s target=%s", domain, praefix, ep.RecordType, target)
-				continue
+				log.Errorf("Domain does not exist for record creation: domain=%s praefix=%s type=%s target=%s error=%v", domain, praefix, ep.RecordType, target, err)
+				return err
 			}
 
 			log.Errorf("Failed to create record: domain=%s praefix=%s type=%s target=%s error=%v", domain, praefix, ep.RecordType, target, err)
