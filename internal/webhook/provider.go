@@ -14,17 +14,27 @@ import (
 
 // IPv64Provider implements the external-dns provider interface
 type IPv64Provider struct {
-	client       *ipv64.Client
-	domainFilter endpoint.DomainFilter
-	dryRun       bool
+	client                   *ipv64.Client
+	domainFilter             endpoint.DomainFilter
+	dryRun                   bool
+	allowedCreateRecordTypes map[string]bool
 }
 
 // NewIPv64Provider creates a new IPv64Provider
-func NewIPv64Provider(client *ipv64.Client, domainFilter endpoint.DomainFilter, dryRun bool) (*IPv64Provider, error) {
+func NewIPv64Provider(client *ipv64.Client, domainFilter endpoint.DomainFilter, dryRun bool, allowedCreateRecordTypes []string) (*IPv64Provider, error) {
+	typeSet := make(map[string]bool, len(allowedCreateRecordTypes))
+	for _, t := range allowedCreateRecordTypes {
+		normalized := strings.ToUpper(strings.TrimSpace(t))
+		if normalized != "" {
+			typeSet[normalized] = true
+		}
+	}
+
 	return &IPv64Provider{
-		client:       client,
-		domainFilter: domainFilter,
-		dryRun:       dryRun,
+		client:                   client,
+		domainFilter:             domainFilter,
+		dryRun:                   dryRun,
+		allowedCreateRecordTypes: typeSet,
 	}, nil
 }
 
@@ -86,6 +96,11 @@ func (p *IPv64Provider) ApplyChanges(ctx context.Context, changes *plan.Changes)
 		oldEp := changes.UpdateOld[i]
 		newEp := changes.UpdateNew[i]
 
+		if !p.isCreateTypeAllowed(newEp.RecordType) {
+			log.Warnf("Skipping update for endpoint %s: record type %s is not allowed for creation", newEp.DNSName, newEp.RecordType)
+			continue
+		}
+
 		if err := p.deleteEndpoint(oldEp); err != nil {
 			log.Errorf("Failed to delete old endpoint %s: %v", oldEp.DNSName, err)
 			continue
@@ -98,6 +113,11 @@ func (p *IPv64Provider) ApplyChanges(ctx context.Context, changes *plan.Changes)
 
 	// Process creations
 	for _, ep := range changes.Create {
+		if !p.isCreateTypeAllowed(ep.RecordType) {
+			log.Warnf("Skipping create for endpoint %s: record type %s is not allowed for creation", ep.DNSName, ep.RecordType)
+			continue
+		}
+
 		if err := p.createEndpoint(ep); err != nil {
 			log.Errorf("Failed to create endpoint %s: %v", ep.DNSName, err)
 		}
@@ -141,6 +161,11 @@ func (p *IPv64Provider) convertToEndpoint(record ipv64.Record, domainName string
 
 // createEndpoint creates a new DNS record from an endpoint
 func (p *IPv64Provider) createEndpoint(ep *endpoint.Endpoint) error {
+	if !p.isCreateTypeAllowed(ep.RecordType) {
+		log.Warnf("Skipping create for endpoint %s: record type %s is not allowed for creation", ep.DNSName, ep.RecordType)
+		return nil
+	}
+
 	domain := p.extractDomain(ep.DNSName)
 	if domain == "" {
 		return fmt.Errorf("could not determine domain for %s", ep.DNSName)
@@ -148,6 +173,7 @@ func (p *IPv64Provider) createEndpoint(ep *endpoint.Endpoint) error {
 
 	// Extract praefix from DNS name
 	praefix := p.extractPraefix(ep.DNSName, domain)
+	log.Debugf("Resolved endpoint for create: dnsName=%s domain=%s praefix=%s type=%s targets=%v", ep.DNSName, domain, praefix, ep.RecordType, ep.Targets)
 
 	// Create records for each target
 	for _, target := range ep.Targets {
@@ -182,6 +208,7 @@ func (p *IPv64Provider) deleteEndpoint(ep *endpoint.Endpoint) error {
 
 	// Extract praefix from DNS name
 	praefix := p.extractPraefix(ep.DNSName, domain)
+	log.Debugf("Resolved endpoint for delete: dnsName=%s domain=%s praefix=%s type=%s targets=%v", ep.DNSName, domain, praefix, ep.RecordType, ep.Targets)
 
 	// Delete records for each target
 	for _, target := range ep.Targets {
@@ -200,42 +227,55 @@ func (p *IPv64Provider) deleteEndpoint(ep *endpoint.Endpoint) error {
 
 // extractDomain extracts the base domain from a DNS name
 func (p *IPv64Provider) extractDomain(dnsName string) string {
+	original := dnsName
 	dnsName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(dnsName), "."))
 	if dnsName == "" {
+		log.Debugf("extractDomain: empty input from dnsName=%q", original)
 		return ""
 	}
 
 	parts := strings.Split(dnsName, ".")
 	if len(parts) >= 3 {
-		return strings.Join(parts[len(parts)-3:], ".")
+		domain := strings.Join(parts[len(parts)-3:], ".")
+		log.Debugf("extractDomain: dnsName=%s resolvedDomain=%s", dnsName, domain)
+		return domain
 	}
 	if len(parts) >= 2 {
-		return strings.Join(parts[len(parts)-2:], ".")
+		domain := strings.Join(parts[len(parts)-2:], ".")
+		log.Debugf("extractDomain: short dnsName=%s resolvedDomain=%s", dnsName, domain)
+		return domain
 	}
 
+	log.Debugf("extractDomain: single-label dnsName=%s", dnsName)
 	return dnsName
 }
 
 // extractPraefix extracts the subdomain praefix from a DNS name
 func (p *IPv64Provider) extractPraefix(dnsName, domain string) string {
+	originalDNSName := dnsName
+	originalDomain := domain
 	dnsName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(dnsName), "."))
 	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
 
 	if dnsName == domain {
+		log.Debugf("extractPraefix: dnsName=%s domain=%s resolvedPraefix=@", dnsName, domain)
 		return "@"
 	}
 
 	// Remove the domain part from the DNS name
 	praefix := strings.TrimSuffix(dnsName, "."+domain)
 	if praefix == "" {
+		log.Debugf("extractPraefix: empty suffix trim for dnsName=%s domain=%s resolvedPraefix=@", dnsName, domain)
 		return "@"
 	}
 
 	if praefix == dnsName {
 		// If nothing was trimmed, the dnsName is the same as domain
+		log.Debugf("extractPraefix: no domain suffix match dnsName=%s domain=%s (originalDnsName=%s originalDomain=%s) resolvedPraefix=@", dnsName, domain, originalDNSName, originalDomain)
 		return "@"
 	}
 
+	log.Debugf("extractPraefix: dnsName=%s domain=%s resolvedPraefix=%s", dnsName, domain, praefix)
 	return praefix
 }
 
@@ -251,6 +291,15 @@ func isSupportedRecordType(recordType string) bool {
 		"SRV":   true,
 	}
 	return supportedTypes[recordType]
+}
+
+func (p *IPv64Provider) isCreateTypeAllowed(recordType string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(recordType))
+	if normalized == "" {
+		return false
+	}
+
+	return p.allowedCreateRecordTypes[normalized]
 }
 
 // Ensure IPv64Provider implements the provider.Provider interface

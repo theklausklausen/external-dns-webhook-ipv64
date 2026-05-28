@@ -67,6 +67,8 @@ func isSuccessStatus(status string) bool {
 
 // doRequest performs an HTTP request with Bearer token authentication
 func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, error) {
+	requestStarted := time.Now()
+
 	if err := c.limiter.Wait(context.Background()); err != nil {
 		return nil, fmt.Errorf("rate limit wait failed: %w", err)
 	}
@@ -90,6 +92,8 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 		return nil, fmt.Errorf("unsupported HTTP method: %s", method)
 	}
 
+	log.Debugf("IPv64 request: method=%s url=%s apiCall=%s params=%q", method, reqURL, apiCall, params.Encode())
+
 	req, err := http.NewRequest(method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -102,6 +106,7 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Debugf("IPv64 request failed: method=%s url=%s error=%v", method, reqURL, err)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -110,6 +115,8 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
+
+	log.Debugf("IPv64 response: method=%s url=%s status=%d duration=%s body=%q", method, reqURL, resp.StatusCode, time.Since(requestStarted), string(data))
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(data))

@@ -69,6 +69,7 @@ The webhook can be configured using the following environment variables:
 | `IPV64_API_URL` | `https://ipv64.net/api.php` | IPv64 API URL |
 | `WEBHOOK_ADDR` | `:8888` | Webhook server listen address |
 | `DOMAIN_FILTER` | - | Comma-separated list of domains to manage |
+| `CREATE_RECORD_TYPES` | `TXT,A,AAAA,CNAME` | Comma-separated list of record types external-dns is allowed to create, reduces API calls |
 | `DRY_RUN` | `false` | Enable dry-run mode (no changes made) |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | `text` | Log format (text, json) |
@@ -170,6 +171,8 @@ spec:
             value: "info"
           - name: DOMAIN_FILTER
             value: "example.com"
+          - name: CREATE_RECORD_TYPES
+            value: "TXT,A,AAAA,CNAME"
         livenessProbe:
           httpGet:
             path: /healthz
