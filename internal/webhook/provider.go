@@ -149,15 +149,6 @@ func (p *IPv64Provider) createEndpoint(ep *endpoint.Endpoint) error {
 	// Extract praefix from DNS name
 	praefix := p.extractPraefix(ep.DNSName, domain)
 
-	// Ensure domain exists - ipv64 creates domains automatically when adding records
-	// but we can explicitly add it first
-	if err := p.client.AddDomain(domain); err != nil {
-		// Ignore errors if domain already exists
-		if !strings.Contains(err.Error(), "already exists") {
-			log.Warnf("Failed to ensure domain exists: %v", err)
-		}
-	}
-
 	// Create records for each target
 	for _, target := range ep.Targets {
 		log.Debugf("Attempting to create record: domain=%s praefix=%s type=%s target=%s", domain, praefix, ep.RecordType, target)
@@ -167,6 +158,23 @@ func (p *IPv64Provider) createEndpoint(ep *endpoint.Endpoint) error {
 				log.Infof("Record %s already exists, skipping", ep.DNSName)
 				continue
 			}
+
+			// Create missing domain only when the API explicitly reports it as missing.
+			if strings.Contains(strings.ToLower(err.Error()), "domain not found") {
+				if ensureErr := p.client.AddDomain(domain); ensureErr != nil {
+					log.Errorf("Failed to create missing domain %s after add_record error: %v", domain, ensureErr)
+					return err
+				}
+
+				if retryErr := p.client.AddRecord(domain, praefix, ep.RecordType, target); retryErr != nil {
+					log.Errorf("Failed to create record after creating domain: domain=%s praefix=%s type=%s target=%s error=%v", domain, praefix, ep.RecordType, target, retryErr)
+					return retryErr
+				}
+
+				log.Debugf("Successfully created record after domain creation: domain=%s praefix=%s type=%s target=%s", domain, praefix, ep.RecordType, target)
+				continue
+			}
+
 			log.Errorf("Failed to create record: domain=%s praefix=%s type=%s target=%s error=%v", domain, praefix, ep.RecordType, target, err)
 			return err
 		}
@@ -203,42 +211,37 @@ func (p *IPv64Provider) deleteEndpoint(ep *endpoint.Endpoint) error {
 
 // extractDomain extracts the base domain from a DNS name
 func (p *IPv64Provider) extractDomain(dnsName string) string {
-	// Get all domains from ipv64
-	domains, err := p.client.GetDomains()
-	if err != nil {
-		log.Warnf("Failed to get domains: %v", err)
+	dnsName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(dnsName), "."))
+	if dnsName == "" {
 		return ""
 	}
 
-	// Find the longest matching domain
-	var longestDomain string
-	for _, domain := range domains {
-		if strings.HasSuffix(dnsName, domain.Domain) || dnsName == domain.Domain {
-			if len(domain.Domain) > len(longestDomain) {
-				longestDomain = domain.Domain
-			}
-		}
+	parts := strings.Split(dnsName, ".")
+	if len(parts) >= 3 {
+		return strings.Join(parts[len(parts)-3:], ".")
+	}
+	if len(parts) >= 2 {
+		return strings.Join(parts[len(parts)-2:], ".")
 	}
 
-	// If no domain found, extract from DNS name (last two parts)
-	if longestDomain == "" {
-		parts := strings.Split(dnsName, ".")
-		if len(parts) >= 2 {
-			longestDomain = strings.Join(parts[len(parts)-2:], ".")
-		}
-	}
-
-	return longestDomain
+	return dnsName
 }
 
 // extractPraefix extracts the subdomain praefix from a DNS name
 func (p *IPv64Provider) extractPraefix(dnsName, domain string) string {
+	dnsName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(dnsName), "."))
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+
 	if dnsName == domain {
 		return "@"
 	}
 
 	// Remove the domain part from the DNS name
 	praefix := strings.TrimSuffix(dnsName, "."+domain)
+	if praefix == "" {
+		return "@"
+	}
+
 	if praefix == dnsName {
 		// If nothing was trimmed, the dnsName is the same as domain
 		return "@"
