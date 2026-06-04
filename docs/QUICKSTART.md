@@ -147,6 +147,7 @@ kubectl get deployment -n external-dns external-dns-webhook-ipv64 -o yaml | grep
 
 If you're hitting rate limits:
 - Check your account limits in the ipv64.net dashboard
+- Ensure `FREE_ACCOUNT` is set correctly (`true` for free accounts, `false` for paid accounts)
 - Increase the external-dns sync interval
 - Consider upgrading your ipv64.net account
 
@@ -171,6 +172,19 @@ env:
   - name: DRY_RUN
     value: "true"
 ```
+
+### Free vs Paid Account Rate Limiting
+
+The webhook applies a built-in client-side limiter based on `FREE_ACCOUNT`:
+
+```yaml
+env:
+  - name: FREE_ACCOUNT
+    value: "true"
+```
+
+- `FREE_ACCOUNT=true` (default): 1 request every 3 minutes
+- `FREE_ACCOUNT=false`: 1 request every 5 seconds
 
 ### Log Level
 

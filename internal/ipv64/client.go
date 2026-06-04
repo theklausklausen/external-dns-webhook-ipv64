@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,11 +17,25 @@ import (
 )
 
 const (
-	defaultAPIURL   = "https://ipv64.net/api.php"
-	healthcheckURL  = "https://ipv64.net/"
-	requestInterval = 5 * time.Second
-	requestBurst    = 1
+	defaultAPIURL              = "https://ipv64.net/api.php"
+	healthcheckURL             = "https://ipv64.net/"
+	freeAccountRequestInterval = 3 * time.Minute
+	paidAccountRequestInterval = 5 * time.Second
+	requestBurst               = 1
 )
+
+func requestInterval() time.Duration {
+	freeAccount, err := strconv.ParseBool(os.Getenv("FREE_ACCOUNT"))
+	if err != nil {
+		freeAccount = true
+	}
+
+	if freeAccount {
+		return freeAccountRequestInterval
+	}
+
+	return paidAccountRequestInterval
+}
 
 // Client represents an ipv64 DNS API client
 //
@@ -39,7 +55,7 @@ func NewClient(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		limiter: rate.NewLimiter(rate.Every(requestInterval), requestBurst),
+		limiter: rate.NewLimiter(rate.Every(requestInterval()), requestBurst),
 	}
 }
 
@@ -51,7 +67,7 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		limiter: rate.NewLimiter(rate.Every(requestInterval), requestBurst),
+		limiter: rate.NewLimiter(rate.Every(requestInterval()), requestBurst),
 	}
 }
 

@@ -164,6 +164,13 @@ Deletes the DNS record immediately from the domain.
 ### Call Limits
 - **Maximum:** 5 API requests within 10 seconds
 
+### Webhook Client Limiter
+- **Environment Variable:** `FREE_ACCOUNT` (default: `true`)
+- **`FREE_ACCOUNT=true`:** 1 request every 3 minutes
+- **`FREE_ACCOUNT=false`:** 1 request every 5 seconds
+
+Use `FREE_ACCOUNT=true` for free ipv64 accounts and set `FREE_ACCOUNT=false` for paid accounts.
+
 ## HTTP Status Codes
 
 - `200 OK` - Successful request

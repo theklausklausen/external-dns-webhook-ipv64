@@ -70,6 +70,7 @@ The webhook can be configured using the following environment variables:
 | `WEBHOOK_ADDR` | `:8888` | Webhook server listen address |
 | `DOMAIN_FILTER` | - | Comma-separated list of domains to manage |
 | `CREATE_RECORD_TYPES` | `TXT,A,AAAA,CNAME` | Comma-separated list of record types external-dns is allowed to create, reduces API calls |
+| `FREE_ACCOUNT` | `true` | Set to `true` for free ipv64 accounts (uses 1 request every 3 minutes); set to `false` for paid accounts (uses 1 request every 5 seconds) |
 | `DRY_RUN` | `false` | Enable dry-run mode (no changes made) |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | `text` | Log format (text, json) |
@@ -173,6 +174,8 @@ spec:
             value: "example.com"
           - name: CREATE_RECORD_TYPES
             value: "TXT,A,AAAA,CNAME"
+          - name: FREE_ACCOUNT
+            value: "true"
         livenessProbe:
           httpGet:
             path: /healthz
@@ -267,6 +270,9 @@ This webhook uses the ipv64.net API with the following features:
 
 - **Account Limit**: Depends on account class (default: 64 requests per 24 hours)
 - **Call Limit**: Maximum 5 API requests within 10 seconds
+- **Webhook Client Limiter**:
+  - `FREE_ACCOUNT=true` (default): 1 request every 3 minutes
+  - `FREE_ACCOUNT=false`: 1 request every 5 seconds
 
 The webhook is designed to minimize API calls by batching operations and caching domain information.
 
@@ -332,6 +338,7 @@ Verify your API key is correct and has sufficient permissions.
 
 If you encounter rate limiting errors:
 - Review your account class and API limits at ipv64.net
+- Verify `FREE_ACCOUNT` matches your account type (`true` for free accounts, `false` for paid accounts)
 - Consider reducing the external-dns sync interval
 - Enable dry-run mode to test without making actual API calls
 

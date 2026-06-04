@@ -64,19 +64,6 @@ stages:
   - publish
   - security
 
-# go-lint:
-#   stage: test
-#   image: golangci/golangci-lint:v1.62.2
-#   script:
-#     - golangci-lint run -v
-#   allow_failure: true
-
-# go-test:
-#   stage: test
-#   image: $GO_IMAGE
-#   script:
-#     - go test -v ./...
-
 # lint
 markdown lint:
   extends: .markdown_lint
@@ -86,29 +73,9 @@ yaml lint:
   <<: *only_on_yaml_change
 prettier lint:
   extends: .prettier
-helm lint:
-  extends: .helm_lint
-  variables:
-    HELM_CHART_DIR: charts/
-    PACKAGE_NAME: external-dns-webhook-technitium
-  <<: *only_on_helm_change
 go-lint:
   extends: .go_lint
   <<: *only_on_code_change
-
-# test
-render helm chart:
-  extends: .render_helm_chart
-  variables:
-    HELM_CHART_DIR: charts/
-    PACKAGE_NAME: external-dns-webhook-technitium
-  <<: *only_on_helm_change
-# run_test_suite:
-#   stage: test
-#   image: golang:1.26
-#   script:
-#     - TEST_ZONE_NAME=example.com make test
-#   <<: *only_on_code_change
 
 # security
 secret_detection:
@@ -140,44 +107,3 @@ package image:
   tags:
     - amd64
   <<: *only_on_code_change
-package helm:
-  extends: .package_helm_chart
-  variables:
-    HELM_CHART_DIR: charts/
-    PACKAGE_NAME: external-dns-webhook-technitium
-  <<: *only_on_helm_change
-
-# deploy
-deploy helm:
-  extends: .deploy_helm_chart
-  variables:
-    HELM_CHART_DIR: charts
-    PACKAGE_NAME: external-dns-webhook-technitium
-  <<: *only_on_helm_change
-
-# # publish
-# publish image to github:
-#   stage: publish
-#   variables:
-#     GIT_STRATEGY: none
-#     IMAGE_NAME: ${NEXUS_REPO_HOST}/${CI_PROJECT_NAME}
-#     TAG: ${CI_COMMIT_SHORT_SHA}
-#   image: docker:dind
-#   before_script:
-#     - echo $GITHUB_CONTAINER_TOKEN | docker login ghcr.io -u $GITHUB_USERNAME --password-stdin
-#     - echo $NEXUS_TOKEN | docker login ${NEXUS_REPO_HOST} -u $NEXUS_USER --password-stdin
-#   script:
-#     - docker pull 
-#       ${NEXUS_REPO_HOST}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}
-#     - docker tag 
-#       ${NEXUS_REPO_HOST}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}
-#       ghcr.io/theklausklausen/external-dns-webhook-technitium:${CI_PIPELINE_IID}
-#     - docker tag 
-#       ${NEXUS_REPO_HOST}/${CI_PROJECT_NAME}:${CI_COMMIT_SHORT_SHA}
-#       ghcr.io/theklausklausen/external-dns-webhook-technitium:latest
-#     - docker push 
-#       ghcr.io/theklausklausen/external-dns-webhook-technitium:${CI_PIPELINE_IID}
-#   after_script:
-#     - docker logout ${NEXUS_REPO_HOST}
-#     - docker logout ghcr.io
-#   <<: *only_on_code_change
