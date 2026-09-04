@@ -177,6 +177,15 @@ func (c *Client) GetDomains() ([]Domain, error) {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
 	}
 
+	if resp.Subdomains != nil {
+		domains := make([]Domain, 0, len(resp.Subdomains))
+		for domainName, domain := range resp.Subdomains {
+			domain.Domain = domainName
+			domains = append(domains, domain)
+		}
+		return domains, nil
+	}
+
 	var domains []Domain
 	responseJSON, err := json.Marshal(resp.Response)
 	if err != nil {
