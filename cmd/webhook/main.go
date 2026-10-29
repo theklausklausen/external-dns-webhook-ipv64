@@ -24,8 +24,13 @@ var (
 	webhookAddr = flag.String("webhook-addr", getEnv("WEBHOOK_ADDR", ":8888"), "Webhook server listen address")
 
 	// DNS configuration
-	domainFilter = flag.String("domain-filter", getEnv("DOMAIN_FILTER", ""), "Comma-separated list of domain filters")
-	dryRun       = flag.Bool("dry-run", getEnv("DRY_RUN", "false") == "true", "Run in dry-run mode (no changes will be made)")
+	domainFilter      = flag.String("domain-filter", getEnv("DOMAIN_FILTER", ""), "Comma-separated list of domain filters")
+	dryRun            = flag.Bool("dry-run", getEnv("DRY_RUN", "false") == "true", "Run in dry-run mode (no changes will be made)")
+	createRecordTypes = flag.String(
+		"create-record-types",
+		getEnv("CREATE_RECORD_TYPES", "TXT,A,AAAA,CNAME"),
+		"Comma-separated list of DNS record types external-dns is allowed to create",
+	)
 
 	// Logging
 	logLevel  = flag.String("log-level", getEnv("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
@@ -79,8 +84,14 @@ func main() {
 		log.Info("No domain filter configured (all domains will be managed)")
 	}
 
+	allowedCreateRecordTypes := parseRecordTypes(*createRecordTypes)
+	if len(allowedCreateRecordTypes) == 0 {
+		log.Fatal("At least one create record type must be configured (CREATE_RECORD_TYPES or --create-record-types)")
+	}
+	log.Infof("Allowed create record types: %v", allowedCreateRecordTypes)
+
 	// Create provider
-	provider, err := webhook.NewIPv64Provider(client, filter, *dryRun)
+	provider, err := webhook.NewIPv64Provider(client, filter, *dryRun, allowedCreateRecordTypes)
 	if err != nil {
 		log.Fatalf("Failed to create provider: %v", err)
 	}
@@ -164,6 +175,24 @@ func createDomainFilter(filterStr string) endpoint.DomainFilter {
 	}
 
 	return endpoint.NewDomainFilter(trimmedFilters)
+}
+
+// parseRecordTypes parses a comma-separated record type list and returns normalized values.
+func parseRecordTypes(typesStr string) []string {
+	parts := strings.Split(typesStr, ",")
+	result := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+
+	for _, p := range parts {
+		normalized := strings.ToUpper(strings.TrimSpace(p))
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		result = append(result, normalized)
+	}
+
+	return result
 }
 
 // getEnv gets an environment variable or returns a default value

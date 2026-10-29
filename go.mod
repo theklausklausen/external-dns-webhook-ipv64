@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/go-chi/chi/v5 v5.0.11
 	github.com/sirupsen/logrus v1.9.3
+	golang.org/x/time v0.3.0
 	sigs.k8s.io/external-dns v0.14.0
 )
 

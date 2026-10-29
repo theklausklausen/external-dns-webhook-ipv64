@@ -1,26 +1,50 @@
 package ipv64
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 const (
-	defaultAPIURL = "https://ipv64.net/api.php"
+	defaultAPIURL              = "https://ipv64.net/api.php"
+	healthcheckURL             = "https://ipv64.net/"
+	freeAccountRequestInterval = 3 * time.Minute
+	paidAccountRequestInterval = 5 * time.Second
+	requestBurst               = 1
 )
 
+func requestInterval() time.Duration {
+	freeAccount, err := strconv.ParseBool(os.Getenv("FREE_ACCOUNT"))
+	if err != nil {
+		freeAccount = true
+	}
+
+	if freeAccount {
+		return freeAccountRequestInterval
+	}
+
+	return paidAccountRequestInterval
+}
+
 // Client represents an ipv64 DNS API client
+//
+//nolint:revive // apiURL naming follows existing project style.
 type Client struct {
 	apiURL     string
 	apiKey     string
 	httpClient *http.Client
+	limiter    *rate.Limiter
 }
 
 // NewClient creates a new ipv64 DNS client with Bearer token authentication
@@ -31,6 +55,7 @@ func NewClient(apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		limiter: rate.NewLimiter(rate.Every(requestInterval()), requestBurst),
 	}
 }
 
@@ -42,52 +67,63 @@ func NewClientWithURL(apiURL, apiKey string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		limiter: rate.NewLimiter(rate.Every(requestInterval()), requestBurst),
 	}
+}
+
+// isSuccessStatus normalizes IPv64 status values to account for API variants.
+func isSuccessStatus(status string) bool {
+	s := strings.ToLower(strings.TrimSpace(status))
+	if s == "success" || s == "ok" {
+		return true
+	}
+
+	// Some IPv64 responses return HTTP-like status strings such as "200 OK".
+	return strings.HasPrefix(s, "2") || strings.HasPrefix(s, "http 2")
 }
 
 // doRequest performs an HTTP request with Bearer token authentication
 func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, error) {
+	requestStarted := time.Now()
+
+	if err := c.limiter.Wait(context.Background()); err != nil {
+		return nil, fmt.Errorf("rate limit wait failed: %w", err)
+	}
+
 	var reqURL string
 	var body io.Reader
 
 	if method == http.MethodGet {
-		// For GET requests, add parameters to URL
 		if params == nil {
 			params = url.Values{}
 		}
 		params.Set(apiCall, "")
 		reqURL = fmt.Sprintf("%s?%s", c.apiURL, params.Encode())
-	} else if method == http.MethodPost {
-		// For POST requests, use form data
+	} else if method == http.MethodPost || method == http.MethodDelete {
 		if params == nil {
 			params = url.Values{}
 		}
 		body = strings.NewReader(params.Encode())
 		reqURL = c.apiURL
-	} else if method == http.MethodDelete {
-		// For DELETE requests, use form data
-		if params == nil {
-			params = url.Values{}
-		}
-		body = strings.NewReader(params.Encode())
-		reqURL = c.apiURL
+	} else {
+		return nil, fmt.Errorf("unsupported HTTP method: %s", method)
 	}
+
+	log.Debugf("IPv64 request: method=%s url=%s apiCall=%s params=%q", method, reqURL, apiCall, params.Encode())
 
 	req, err := http.NewRequest(method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Add Bearer token authentication
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
-
-	// Set content type for POST and DELETE requests
 	if method == http.MethodPost || method == http.MethodDelete {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Debugf("IPv64 request failed: method=%s url=%s error=%v", method, reqURL, err)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -97,7 +133,8 @@ func (c *Client) doRequest(method, apiCall string, params url.Values) ([]byte, e
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Check for HTTP errors
+	log.Debugf("IPv64 response: method=%s url=%s status=%d duration=%s body=%q", method, reqURL, resp.StatusCode, time.Since(requestStarted), string(data))
+
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(data))
 	}
@@ -117,7 +154,7 @@ func (c *Client) GetAccountInfo() (*AccountInfo, error) {
 		return nil, fmt.Errorf("failed to decode account info response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
 	}
 
@@ -136,25 +173,30 @@ func (c *Client) GetDomains() ([]Domain, error) {
 		return nil, fmt.Errorf("failed to decode domains response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return nil, fmt.Errorf("API returned status: %s", resp.Status)
 	}
 
-	// Parse the response which can be either an array or an object
+	if resp.Subdomains != nil {
+		domains := make([]Domain, 0, len(resp.Subdomains))
+		for domainName, domain := range resp.Subdomains {
+			domain.Domain = domainName
+			domains = append(domains, domain)
+		}
+		return domains, nil
+	}
+
 	var domains []Domain
 	responseJSON, err := json.Marshal(resp.Response)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
 	}
 
-	// Try to unmarshal as array first
 	if err := json.Unmarshal(responseJSON, &domains); err != nil {
-		// If that fails, try as object with domain keys
 		var domainsMap map[string]Domain
 		if err := json.Unmarshal(responseJSON, &domainsMap); err != nil {
 			return nil, fmt.Errorf("failed to decode domains: %w", err)
 		}
-		// Convert map to slice
 		for domainName, domain := range domainsMap {
 			domain.Domain = domainName
 			domains = append(domains, domain)
@@ -179,7 +221,7 @@ func (c *Client) AddDomain(domain string) error {
 		return fmt.Errorf("failed to decode add domain response: %w", err)
 	}
 
-	if resp.Status != "success" && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
+	if !isSuccessStatus(resp.Status) && !strings.Contains(strings.ToLower(resp.Response), "already exists") {
 		return fmt.Errorf("failed to add domain: %s", resp.Response)
 	}
 
@@ -202,7 +244,7 @@ func (c *Client) DeleteDomain(domain string) error {
 		return fmt.Errorf("failed to decode delete domain response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete domain: %s", resp.Response)
 	}
 
@@ -228,7 +270,7 @@ func (c *Client) AddRecord(domain, praefix, recordType, content string) error {
 		return fmt.Errorf("failed to decode add record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to add record: %s", resp.Response)
 	}
 
@@ -254,7 +296,7 @@ func (c *Client) DeleteRecord(domain, praefix, recordType, content string) error
 		return fmt.Errorf("failed to decode delete record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete record: %s", resp.Response)
 	}
 
@@ -277,7 +319,7 @@ func (c *Client) DeleteRecordByID(recordID int) error {
 		return fmt.Errorf("failed to decode delete record response: %w", err)
 	}
 
-	if resp.Status != "success" {
+	if !isSuccessStatus(resp.Status) {
 		return fmt.Errorf("failed to delete record: %s", resp.Response)
 	}
 
@@ -287,6 +329,24 @@ func (c *Client) DeleteRecordByID(recordID int) error {
 
 // HealthCheck performs a health check on the ipv64 API
 func (c *Client) HealthCheck() error {
-	_, err := c.GetAccountInfo()
-	return err
+	req, err := http.NewRequest(http.MethodGet, healthcheckURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create health check request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("health check request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return fmt.Errorf("failed to read health check response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("health check failed with status: %s", resp.Status)
+	}
+
+	return nil
 }

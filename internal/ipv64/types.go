@@ -35,9 +35,10 @@ type APIResponse struct {
 
 // DomainsResponse represents the response from get_domains API
 type DomainsResponse struct {
-	Response interface{} `json:"response"` // Can be array of domains or object with domains
-	Status   string      `json:"status"`
-	APICall  string      `json:"api-call,omitempty"`
+	Response   interface{}       `json:"response"` // Can be array of domains or object with domains
+	Subdomains map[string]Domain `json:"subdomains"`
+	Status     string            `json:"status"`
+	APICall    string            `json:"api-call,omitempty"`
 }
 
 // AccountInfoResponse represents the response from get_account_info API
