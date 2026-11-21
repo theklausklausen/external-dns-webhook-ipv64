@@ -20,7 +20,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -ldflags="-w -s" -o webhook ./cmd/webhook
 
 # Final stage
-FROM alpine:3.19 AS prod
+FROM alpine:3.24 AS prod
 
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates tzdata
